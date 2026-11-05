@@ -203,6 +203,19 @@ body.embed header.bar,body.embed .foot{display:none}
 .dist .d{display:grid;grid-template-columns:28px minmax(0,1fr) 40px;align-items:center;gap:8px}
 .dist .d i{display:block;height:22px;border-radius:6px}
 .answered{font-family:var(--font-display);font-size:1.3rem;font-weight:800}
+.qctl{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;width:100%}
+.qctl .btn{flex:1 1 auto}
+.qauto{display:flex;align-items:center;gap:8px;font-size:.88rem;font-weight:700;color:var(--muted);cursor:pointer;user-select:none}
+.qauto input{width:18px;height:18px;accent-color:var(--brand)}
+.qwho{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-height:150px;overflow:auto}
+.qwho span{font-size:.8rem;font-weight:700;border-radius:99px;padding:3px 10px;background:var(--surface-2);color:var(--muted)}
+.qwho span.y{background:var(--brand);color:#fff}
+.qnav{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:14px;background:var(--surface);border-radius:16px;padding:10px 12px;box-shadow:var(--shadow)}
+.qnav b{font-family:var(--font-display);margin-inline-end:4px}
+.qnav button{min-width:42px;height:42px;border-radius:12px;border:2px solid var(--line,#ddd);background:var(--surface-2);font-family:var(--font-display);font-weight:800;font-size:1.05rem;cursor:pointer;color:var(--ink)}
+.qnav button.done{border-color:var(--ok);color:var(--ok)}
+.qnav button.cur{background:var(--brand);border-color:var(--brand);color:#fff}
+.timer.paused{background:conic-gradient(var(--muted) var(--p,100%),var(--surface-2) 0)}
 
 /* balloons */
 .sky{position:relative;height:380px;border-radius:22px;overflow:hidden;background:linear-gradient(to top,var(--surface-2),var(--surface));box-shadow:var(--shadow)}
@@ -2072,7 +2085,7 @@ function settingsHTML(set){
     <label class="f" for="sDur">مدة اللعبة (للألعاب الفردية والفرق)
       <select class="in" id="sDur">${[3,5,8,10,15].map(m => `<option value="${m}" ${set.dur == m ? 'selected' : ''}>${ar(m)} دقائق</option>`).join('')}</select></label>
     <label class="f" for="sQdur">وقت السؤال في مسابقة المعلم
-      <select class="in" id="sQdur">${[15,20,30,45,60].map(m => `<option value="${m}" ${set.qdur == m ? 'selected' : ''}>${ar(m)} ثانية</option>`).join('')}</select></label>
+      <select class="in" id="sQdur">${[10,15,20,30,45,60,90,120].map(m => `<option value="${m}" ${set.qdur == m ? 'selected' : ''}>${ar(m)} ثانية</option>`).join('')}</select></label>
     <label class="f" for="sTarget">قوة الفوز في شد الحبل
       <select class="in" id="sTarget">${[6,10,15,20].map(m => `<option value="${m}" ${set.target == m ? 'selected' : ''}>فرق ${ar(m)} إجابات</option>`).join('')}</select></label>
   </div>`;
@@ -2411,7 +2424,11 @@ function tGame(s){
   if(g === 'wheel'){ $('#spin').onclick = spinWheel; TS.wheelLoop = (TS.wheelLoop || 0) + 1; drawWheelLoop(TS.wheelLoop) }
   app.onclick = e => {
     if(e.target.closest('#qNext')) quizNext();
-    if(e.target.closest('#qReveal')) Store.update(sp(TS.code, 'info/q'), { reveal:true });
+    if(e.target.closest('#qReveal')) Store.update(sp(TS.code, 'info/q'), { reveal:true, paused:null });
+    if(e.target.closest('#qPause')) quizPause();
+    if(e.target.closest('#qAdd')) quizAdd(10);
+    if(e.target.closest('#qRedo')){ const q = TS.sess && TS.sess.info.q; if(q) quizGo(q.i) }
+    const qi = e.target.closest('[data-qi]'); if(qi) quizGo(+qi.dataset.qi);
     const j = e.target.closest('[data-judge]'); if(j) wheelJudge(j.dataset.judge === '1');
   };
   tDraw(s);
@@ -2430,36 +2447,73 @@ function drawQuizT(s){
   const ans = (s.answers && s.answers[q.i]) || {}, n = Object.keys(ans).length, total = plist(s).length;
   const dist = opts.map(o => Object.values(ans).filter(a => a.c === o).length);
   const st = $('#stage');
-  const key = q.i + ':' + q.reveal;
+  const key = q.i + ':' + q.reveal + ':' + (q.paused != null ? 'p' : 'g') + ':' + items.length;
   if(st.dataset.k !== key){
     st.dataset.k = key;
+    const asked = s.answers || {};
     st.innerHTML = `<div class="quiz-t"><div class="qcard">
       <div class="qmeta">${qLabel(it)} • السؤال ${ar(q.i+1)} من ${ar(items.length)}</div>
       ${qBody(it)}
       <div class="opts">${opts.map((o,k) => `<button class="opt o${k} ${o.length > 22 ? 'long' : ''} ${q.reveal ? (o === it.a ? 'right' : 'dim') : ''}" type="button" disabled><span class="sh">${SHAPES[k]}</span>${T(o)}</button>`).join('')}</div>
       </div><div class="card stack" style="align-items:center;text-align:center">
         ${q.reveal ? `<b style="font-family:var(--font-display);font-size:1.2rem">إجابات الطلاب</b><div class="dist" style="width:100%" id="dist"></div>
-          <div class="row" style="justify-content:center"><button class="btn sun" id="qNext" type="button">${q.i + 1 < items.length ? 'السؤال التالي' : 'عرض النتائج'}</button></div>`
-        : `<div class="timer" id="qTimer"><span>--</span></div><span class="answered" id="qCnt"></span><button class="btn ghost sm" id="qReveal" type="button">إظهار الإجابة الآن</button>`}
+          <div class="qctl"><button class="btn sun" id="qNext" type="button">${q.i + 1 < items.length ? 'السؤال التالي' : 'عرض النتائج'}</button><button class="btn ghost sm" id="qRedo" type="button">إعادة السؤال</button></div>`
+        : `<div class="timer${q.paused != null ? ' paused' : ''}" id="qTimer"><span>--</span></div><span class="answered" id="qCnt"></span>
+          <div class="qctl"><button class="btn ghost sm" id="qPause" type="button">${q.paused != null ? '▶ متابعة الوقت' : '⏸ إيقاف الوقت'}</button><button class="btn ghost sm" id="qAdd" type="button">+١٠ ثوانٍ</button></div>
+          <button class="btn sun" id="qReveal" type="button">إنهاء السؤال وإظهار الإجابة</button>
+          <label class="qauto"><input type="checkbox" id="qAuto" ${qAutoOn() ? 'checked' : ''}>إنهاء تلقائي لما الكل يجاوب</label>
+          <div class="qwho" id="qWho"></div>`}
       </div></div>
+      <div class="qnav"><b>اعرض سؤال رقم:</b>${items.map((_, k) => `<button type="button" data-qi="${k}" class="${k === q.i ? 'cur' : asked[k] ? 'done' : ''}" title="${k === q.i ? 'المعروض الآن' : asked[k] ? 'تم عرضه (عرضه مرة ثانية يعيده من جديد)' : 'اعرض هذا السؤال الآن'}">${ar(k+1)}</button>`).join('')}</div>
       ${q.reveal ? `<div class="sec-title"><h3>المتصدرون</h3></div><div id="qlb"></div>` : ''}`;
+    const au = $('#qAuto'); if(au) au.onchange = () => lsSet('rc_qauto', au.checked ? '1' : '0');
   }
   if(q.reveal){
     $('#dist').innerHTML = opts.map((o,k) => `<div class="d"><span>${SHAPES[k]}</span><i style="width:${total ? Math.max(4, dist[k]/total*100) : 4}%;background:var(--o${k+1});${o === it.a ? 'outline:3px solid var(--ok);outline-offset:1px' : ''}"></i><b>${ar(dist[k])}</b></div>`).join('');
     $('#qlb').innerHTML = lbHTML(s, 5);
-  } else { const c = $('#qCnt'); if(c) c.textContent = `أجاب ${ar(n)} من ${ar(total)}` }
+  } else {
+    const c = $('#qCnt'); if(c) c.textContent = `أجاب ${ar(n)} من ${ar(total)}`;
+    const w = $('#qWho'); if(w) w.innerHTML = plist(s).map(p => `<span class="${ans[p.id] ? 'y' : ''}">${esc(p.name)}${ans[p.id] ? ' ✓' : ''}</span>`).join('');
+  }
+  quizTimerTick();
 }
 function quizTimerTick(){
   const s = TS.sess; if(!s || s.info.game !== 'quiz' || s.info.status !== 'playing') return;
   const q = s.info.q, el = $('#qTimer'); if(!el || q.reveal) return;
-  const dur = (s.info.set.qdur || 20) * 1000, left = q.at + dur - Store.now();
+  const dur = qDurMs(s, q), left = q.paused != null ? q.paused : q.at + dur - Store.now();
   el.style.setProperty('--p', Math.max(0, Math.min(100, left/dur*100)) + '%');
-  el.firstElementChild.textContent = left > dur ? 'استعد' : ar(Math.max(0, Math.ceil(left/1000)));
+  el.firstElementChild.textContent = q.paused == null && left > dur ? 'استعد' : ar(Math.max(0, Math.ceil(left/1000)));
 }
 function quizNext(){
   const s = TS.sess, q = s.info.q, items = quizItems(s);
   if(q.i + 1 >= items.length) return endGame();
-  Store.update(sp(TS.code, 'info/q'), { i: q.i + 1, at: Store.now() + 1200, reveal:false });
+  quizGo(q.i + 1);
+}
+/* عرض أي سؤال: لو سبق عرضه تُلغى نقاطه القديمة ويُعاد من جديد */
+async function quizGo(i){
+  const s = TS.sess; if(!s) return; const items = quizItems(s); if(i < 0 || i >= items.length) return;
+  const u = {}, prev = (s.answers && s.answers[i]) || {}, L = lessonById(s.info.lesson), it = items[i];
+  for(const [pid, a] of Object.entries(prev)){
+    const p = (s.players || {})[pid]; if(!p) continue;
+    const pts = a.pts != null ? a.pts : (a.ok ? quizPoints(a.ms || 0, s) : 0);
+    u[`players/${pid}/score`] = Math.max(0, (p.score||0) - pts);
+    if(a.ok) u[`players/${pid}/ok`] = Math.max(0, (p.ok||0) - 1); else u[`players/${pid}/bad`] = Math.max(0, (p.bad||0) - 1);
+    u[`log/${keyOf(L, it)}/${pid}_q${i}`] = null;
+  }
+  u[`answers/${i}`] = null;
+  u['info/q'] = { i, at: Store.now() + 1200, reveal:false };
+  await Store.update(sp(TS.code), u);
+}
+function quizPause(){
+  const s = TS.sess, q = s && s.info.q; if(!q || q.reveal) return;
+  const dur = qDurMs(s, q);
+  if(q.paused != null) Store.update(sp(TS.code, 'info/q'), { paused: null, at: Store.now() - (dur - q.paused) });
+  else Store.update(sp(TS.code, 'info/q'), { paused: Math.max(0, Math.min(dur, q.at + dur - Store.now())) });
+}
+function quizAdd(sec){
+  const s = TS.sess, q = s && s.info.q; if(!q || q.reveal) return;
+  const u = { dur: qDurMs(s, q) / 1000 + sec }; if(q.paused != null) u.paused = q.paused + sec * 1000;
+  Store.update(sp(TS.code, 'info/q'), u);
 }
 /* عجلة الأسماء */
 const WHEEL_SPIN_MS = 4200;
@@ -2556,7 +2610,7 @@ function teacherTick(){
   if(g === 'race' && ps.length && ps.every(p => p.done)) return endGame();
   if((g === 'balloon' || g === 'match') && ps.length && !s.info.set.extra && ps.every(p => p.done)) return endGame();
   if(g === 'quiz'){ const q = s.info.q; if(q && !q.reveal){ const n = Object.keys((s.answers && s.answers[q.i]) || {}).length;
-      if(now > q.at + (s.info.set.qdur || 20) * 1000 + 300 || (ps.length && n >= ps.length)) Store.update(sp(TS.code, 'info/q'), { reveal:true }) } }
+      if(!q.paused && (now > q.at + qDurMs(s, q) + 1200 || (qAutoOn() && ps.length && n >= ps.length && now > q.at))) Store.update(sp(TS.code, 'info/q'), { reveal:true }) } }
   if(g === 'wheel'){ const w = s.info.wheel; if(w && w.state === 'spin' && now - w.at > WHEEL_SPIN_MS + 200) Store.update(sp(TS.code, 'info/wheel'), { state:'ask', askAt: now }) }
   if(Store.mode === 'demo') botTick(s, now);
 }
@@ -2566,15 +2620,17 @@ function botTick(s, now){
     if(!p.bot) continue;
     if(GAMES[g].paced){ if(p.done || Math.random() > 0.16) continue; const ok = Math.random() < 0.72; const it = seqItem(L, s.info.set.extra, p.id, p.idx || 0); u[`log/${keyOf(L, it)}/${p.id}_${p.idx||0}`] = ok ? 1 : 0; const up = pacedUpdate(s, p, ok, now, Math.random()); for(const k in up) u[`players/${p.id}/${k}`] = up[k] }
     else if(g === 'match'){ if(p.done || Math.random() > 0.05) continue; const idx = (p.idx||0) + 4; for(let j=0;j<4;j++){ const it = seqItem(L, s.info.set.extra, p.id + 'm', (p.idx||0) + j, true); u[`log/${keyOf(L, it)}/${p.id}_m${(p.idx||0)+j}`] = Math.random() < .85 ? 1 : 0 } u[`players/${p.id}/idx`] = idx; u[`players/${p.id}/score`] = (p.score||0) + 400 - (Math.random() < .5 ? 20 : 0); u[`players/${p.id}/ok`] = (p.ok||0) + 4; if(!s.info.set.extra && idx >= matchTotal(s)) u[`players/${p.id}/done`] = true }
-    else if(g === 'quiz'){ const q = s.info.q; if(!q || q.reveal || now < q.at) continue; const has = s.answers && s.answers[q.i] && s.answers[q.i][p.id];
+    else if(g === 'quiz'){ const q = s.info.q; if(!q || q.reveal || q.paused || now < q.at) continue; const has = s.answers && s.answers[q.i] && s.answers[q.i][p.id];
       if(!has && now - q.at > 1500 + hashStr(p.id + q.i) % 9000){ const it = quizItems(s)[q.i]; const ok = Math.random() < 0.7; const c = ok ? it.a : it.w[Math.floor(Math.random()*3)]; const ms = now - q.at; const pts = ok ? quizPoints(ms, s) : 0;
-        u[`answers/${q.i}/${p.id}`] = { c, ok, ms }; u[`log/${keyOf(L, it)}/${p.id}_q${q.i}`] = ok ? 1 : 0; u[`players/${p.id}/score`] = (p.score||0) + pts; if(ok) u[`players/${p.id}/ok`] = (p.ok||0) + 1; else u[`players/${p.id}/bad`] = (p.bad||0) + 1 } }
+        u[`answers/${q.i}/${p.id}`] = { c, ok, ms, pts }; u[`log/${keyOf(L, it)}/${p.id}_q${q.i}`] = ok ? 1 : 0; u[`players/${p.id}/score`] = (p.score||0) + pts; if(ok) u[`players/${p.id}/ok`] = (p.ok||0) + 1; else u[`players/${p.id}/bad`] = (p.bad||0) + 1 } }
     else if(g === 'wheel'){ const w = s.info.wheel; if(w && w.state === 'ask' && w.pid === p.id && now - (w.askAt || w.at) > 2500){ const ok = Math.random() < 0.7;
         u['info/wheel/state'] = 'done'; u['info/wheel/ok'] = ok; u[`log/${keyOf(L, wheelItem(s, w.i))}/${p.id}_w${w.n}`] = ok ? 1 : 0; if(!ok) u[`players/${p.id}/bad`] = (p.bad||0) + 1; if(ok){ u[`players/${p.id}/score`] = (p.score||0) + 100; u[`players/${p.id}/ok`] = (p.ok||0) + 1 } } }
   }
   if(Object.keys(u).length) Store.update(sp(TS.code), u);
 }
-const quizPoints = (ms, s) => Math.round(500 + 500 * Math.max(0, 1 - ms / ((s.info.set.qdur || 20) * 1000)));
+const qDurMs = (s, q) => (((q && q.dur) || s.info.set.qdur || 20) * 1000);
+const quizPoints = (ms, s, q) => Math.round(500 + 500 * Math.max(0, 1 - ms / qDurMs(s, q || s.info.q)));
+const qAutoOn = () => lsGet('rc_qauto') !== '0';
 
 /* =========================================================
    الطالب
@@ -2757,7 +2813,7 @@ function sQuiz(s){
     const q = s2.info.q, items = quizItems(s2), it = items[q.i], opts = optionsFor(it, s2.info.code + 'q' + q.i);
     const mine = s2.answers && s2.answers[q.i] && s2.answers[q.i][SS.pid];
     const sc = $('#myScore'); if(sc) sc.textContent = ar(SS.me.score || 0) + ' نقطة';
-    const key = q.i + ':' + q.reveal + ':' + (mine ? 1 : 0) + ':' + (Store.now() < q.at ? 'w' : 'g');
+    const key = q.i + ':' + q.reveal + ':' + (mine ? 1 : 0) + ':' + (q.paused != null ? 'p' : Store.now() < q.at ? 'w' : 'g') + ':' + q.at;
     if(key === lastKey) return; lastKey = key;
     const head = `<div class="qmeta">السؤال ${ar(q.i+1)} من ${ar(items.length)}</div>${qBody(it)}`;
     if(q.reveal){
@@ -2767,16 +2823,19 @@ function sQuiz(s){
       if(ok) confetti();
     } else if(mine){
       $('#play').innerHTML = `<div class="card wait"><span class="big-av">⏳</span><h2>تم إرسال إجابتك</h2><p class="muted" style="margin:0">انتظر حتى تظهر الإجابة الصحيحة.</p></div>`;
+    } else if(q.paused != null){
+      $('#play').innerHTML = `<div class="card wait"><span class="big-av">⏸️</span><h2>المعلم أوقف الوقت مؤقتًا</h2><p class="muted" style="margin:0">استعد، السؤال ${ar(q.i+1)} راجع حالًا.</p></div>`;
     } else if(Store.now() < q.at){
       $('#play').innerHTML = `<div class="card wait"><span class="big-av">👀</span><h2>استعد للسؤال ${ar(q.i+1)}</h2></div>`;
       setTimeout(() => SS.sess && draw(SS.sess), Math.max(50, q.at - Store.now() + 30));
     } else {
       $('#play').innerHTML = `<div class="qcard">${head}<div class="opts">${opts.map((o,k) => `<button class="opt o${k} ${o.length > 22 ? 'long' : ''}" type="button" data-o="${esc(o)}"><span class="sh">${SHAPES[k]}</span>${T(o)}</button>`).join('')}</div></div>`;
       $$('.opt').forEach(b => b.onclick = async () => {
+        const qn = SS.sess && SS.sess.info.q; if(!qn || qn.i !== q.i || qn.reveal || qn.paused != null) return;
         $$('.opt').forEach(x => x.disabled = true);
-        const ms = Store.now() - q.at, ok = b.dataset.o === it.a, pts = ok ? quizPoints(ms, s2) : 0; beep(ok);
+        const ms = Math.max(0, Store.now() - qn.at), ok = b.dataset.o === it.a, pts = ok ? quizPoints(ms, s2, qn) : 0; beep(ok);
         const me = SS.sess.players[SS.pid] || {};
-        await Store.update(sp(SS.code), { [`answers/${q.i}/${SS.pid}`]: { c: b.dataset.o, ok, ms }, [`log/${keyOf(lessonById(s2.info.lesson), it)}/${SS.pid}_q${q.i}`]: ok ? 1 : 0, [`players/${SS.pid}/score`]: (me.score||0) + pts, [`players/${SS.pid}/ok`]: (me.ok||0) + (ok ? 1 : 0), [`players/${SS.pid}/bad`]: (me.bad||0) + (ok ? 0 : 1) });
+        await Store.update(sp(SS.code), { [`answers/${q.i}/${SS.pid}`]: { c: b.dataset.o, ok, ms, pts }, [`log/${keyOf(lessonById(s2.info.lesson), it)}/${SS.pid}_q${q.i}`]: ok ? 1 : 0, [`players/${SS.pid}/score`]: (me.score||0) + pts, [`players/${SS.pid}/ok`]: (me.ok||0) + (ok ? 1 : 0), [`players/${SS.pid}/bad`]: (me.bad||0) + (ok ? 0 : 1) });
       });
     }
   }
